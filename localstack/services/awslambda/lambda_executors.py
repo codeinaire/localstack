@@ -130,6 +130,28 @@ class LambdaExecutorContainers(LambdaExecutor):
         LOG.debug('Lambda result / log output:\n%s\n>%s' % (result.strip(), log_output.strip().replace('\n', '\n> ')))
         return result, log_output
 
+    def lambda_docker_network(self, func_arn):
+        network = None
+    
+        lambda_config = arn_to_lambda[func_arn]
+        if config.LAMBDA_SUBNET_AS_DOCKERNET and lambda_config.vpc_config:
+            subnets = lambda_config.vpc_config.get('SubnetIds', [])
+            if len(subnets) > 0:
+                network = subnets[0]
+    
+        if not network and config.LAMBDA_DEFAULT_DOCKER_NETWORK:
+            network = config.LAMBDA_DEFAULT_DOCKER_NETWORK
+    
+        return network
+    
+    
+    def lambda_docker_cmd_networksection(self, func_arn):
+        network = lambda_docker_network(func_arn)
+        if network:
+            return f' --network="{network}" '
+        else:
+            return ''
+
 
 class LambdaExecutorReuseContainers(LambdaExecutorContainers):
     """ Executor class for executing Lambda functions in re-usable Docker containers """
@@ -215,6 +237,8 @@ class LambdaExecutorReuseContainers(LambdaExecutorContainers):
                 self.destroy_docker_container(func_arn)
 
                 env_vars_str = ' '.join(['-e {}={}'.format(k, cmd_quote(v)) for (k, v) in env_vars])
+                
+                network = self.lambda_docker_cmd_networksection(func_arn)
 
                 # Create and start the container
                 LOG.debug('Creating container: %s' % container_name)
@@ -227,8 +251,9 @@ class LambdaExecutorReuseContainers(LambdaExecutorContainers):
                     ' -e HOSTNAME="$HOSTNAME"'
                     ' -e LOCALSTACK_HOSTNAME="$LOCALSTACK_HOSTNAME"'
                     '  %s'  # env_vars
+                    '  %s'  # network config
                     ' lambci/lambda:%s'
-                ) % (container_name, env_vars_str, runtime)
+                ) % (container_name, env_vars_str, network, runtime)
                 LOG.debug(cmd)
                 run(cmd, stderr=subprocess.PIPE, outfile=subprocess.PIPE)
 
@@ -409,25 +434,29 @@ class LambdaExecutorSeparateContainers(LambdaExecutorContainers):
 
         env_vars_string = ' '.join(['-e {}="${}"'.format(k, k) for (k, v) in env_vars.items()])
 
+        network = self.lambda_docker_cmd_networksection(func_arn)
+        
         if config.LAMBDA_REMOTE_DOCKER:
             cmd = (
                 'CONTAINER_ID="$(docker create'
+                ' %s'
                 ' %s'
                 ' %s'
                 ' "lambci/lambda:%s" %s'
                 ')";'
                 'docker cp "%s/." "$CONTAINER_ID:/var/task";'
                 'docker start -a "$CONTAINER_ID";'
-            ) % (entrypoint, env_vars_string, runtime, command, lambda_cwd)
+            ) % (entrypoint, env_vars_string, runtime, network, command, lambda_cwd)
         else:
             lambda_cwd_on_host = self.get_host_path_for_path_in_docker(lambda_cwd)
             cmd = (
                 'docker run'
                 '%s -v "%s":/var/task'
                 ' %s'
+                ' %s'
                 ' --rm'
                 ' "lambci/lambda:%s" %s'
-            ) % (entrypoint, lambda_cwd_on_host, env_vars_string, runtime, command)
+            ) % (entrypoint, lambda_cwd_on_host, env_vars_string, network, runtime, command)
         return cmd
 
     def get_host_path_for_path_in_docker(self, path):
