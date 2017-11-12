@@ -156,7 +156,7 @@ def lambda_docker_network(func_arn):
 def lambda_docker_cmd_networksection(func_arn):
     network = lambda_docker_network(func_arn)
     if network:
-        return f' --network="{network}" '
+        return ' --network="%s" ' % (network)
     else:
         return ''
 
