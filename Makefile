@@ -82,9 +82,10 @@ web:               ## Start web application (dashboard)
 
 test:              ## Run automated tests
 	make lint && \
-	($(VENV_RUN); DEBUG=$(DEBUG) PYTHONPATH=`pwd` nosetests --with-coverage --logging-level=WARNING --nocapture --no-skip --exe --cover-erase --cover-tests --cover-inclusive --cover-package=localstack --with-xunit --exclude='$(VENV_DIR).*' --ignore-files='lambda_python3.py,lambda_python3_nwtest.py' .)
+	($(VENV_RUN); DEBUG=$(DEBUG) PYTHONPATH=`pwd` nosetests --with-coverage --logging-level=WARNING --nocapture --no-skip --exe --cover-erase --cover-tests --cover-inclusive --cover-package=localstack --with-xunit --exclude='$(VENV_DIR).*' --ignore-files='lambda_python3.+' .)
 
 test-lambdanet:    ## Test running lambdas in specific docker networks
+
 	# setup docker infrastructure needed by tests
 	# basically run simple http servers in separate bridge networks
 	-docker network create -d bridge test_localstack_lambdanet_default
@@ -108,7 +109,7 @@ test-lambdanet:    ## Test running lambdas in specific docker networks
 	          --no-skip --exe --cover-erase --cover-tests --cover-inclusive \
 			  --cover-package=localstack --with-xunit \
 			  --exclude='$(VENV_DIR).*' \
-			  --ignore-files='lambda_python3.py,lambda_python3_nwtest.py' .)
+			  --ignore-files='lambda_python3.+' .)
 	#cleanup our docker infrastructure
 	docker kill test_localstack_lambdanet_default_id
 	docker kill test_localstack_lambdanet_custom_id
