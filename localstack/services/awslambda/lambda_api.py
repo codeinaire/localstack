@@ -322,6 +322,7 @@ def run_lambda(func, event, context, func_arn, suppress_output=False, async=Fals
                     ' -e HOSTNAME="$HOSTNAME"'
                     ' -e LOCALSTACK_HOSTNAME="$LOCALSTACK_HOSTNAME"' +
                     lambda_docker_cmd_networksection(func_arn) +
+                    config.LAMBDA_DOCKER_OPTIONS +
                     ' %s'
                     ' "lambci/lambda:%s" %s'
                     ')";'
@@ -337,6 +338,7 @@ def run_lambda(func, event, context, func_arn, suppress_output=False, async=Fals
                     ' -e HOSTNAME="$HOSTNAME"'
                     ' -e LOCALSTACK_HOSTNAME="$LOCALSTACK_HOSTNAME"' +
                     lambda_docker_cmd_networksection(func_arn) +
+                    config.LAMBDA_DOCKER_OPTIONS +
                     ' %s'
                     ' --rm'
                     ' "lambci/lambda:%s" %s'
