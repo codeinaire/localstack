@@ -62,6 +62,7 @@ if not LAMBDA_EXECUTOR:
 
 LAMBDA_DEFAULT_DOCKER_NETWORK = os.environ.get('LAMBDA_DEFAULT_DOCKER_NETWORK', '').strip()
 LAMBDA_SUBNET_AS_DOCKERNET = os.environ.get('LAMBDA_SUBNET_AS_DOCKERNET', False)    
+LAMBDA_DOCKER_OPTIONS = ' ' + os.environ.get('LAMBDA_DOCKER_OPTIONS', '')
 
 # list of environment variable names used for configuration.
 # Make sure to keep this in sync with the above!
