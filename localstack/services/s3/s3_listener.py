@@ -121,10 +121,10 @@ def queue_url_for_arn(queue_arn):
 def send_notifications(method, bucket_name, object_path):
     for bucket, config in iteritems(S3_NOTIFICATIONS):
         if bucket == bucket_name:
-            action = {'PUT': 'ObjectCreated', 'DELETE': 'ObjectRemoved'}[method]
+            action = {'PUT': 'ObjectCreated', 'POST': 'ObjectCreated', 'DELETE': 'ObjectRemoved'}[method]
             # TODO: support more detailed methods, e.g., DeleteMarkerCreated
             # http://docs.aws.amazon.com/AmazonS3/latest/dev/NotificationHowTo.html
-            api_method = {'PUT': 'Put', 'DELETE': 'Delete'}[method]
+            api_method = {'PUT': 'Put', 'POST': 'Post', 'DELETE': 'Delete'}[method]
             event_name = '%s:%s' % (action, api_method)
             if (event_type_matches(config['Event'], action, api_method) and
                     filter_rules_match(config.get('Filter'), object_path)):
@@ -412,10 +412,20 @@ class ProxyListenerS3(ProxyListener):
 
         bucket_name = get_bucket_name(path, headers)
 
+        # No path-name based bucket name?  Try host-based
+        hostname_parts = headers['host'].split('.')
+        if (not bucket_name or len(bucket_name) == 0) and len(hostname_parts) > 1:
+            bucket_name = hostname_parts[0]
+
         # POST requests to S3 may include a success_action_redirect field,
         # which should be used to redirect a client to a new location.
         if method == 'POST':
             key, redirect_url = multipart_content.find_multipart_redirect_url(data, headers)
+
+            # send notification for object POSTS
+            object_path = key if key[0] == '/' else '/%s' % key
+            send_notifications(method, bucket_name, object_path)
+
             if key and redirect_url:
                 response.status_code = 303
                 response.headers['Location'] = expand_redirect_url(redirect_url, key, bucket_name)
