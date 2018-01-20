@@ -578,6 +578,7 @@ def get_function_configuration(function):
         operationId: 'getFunctionConfiguration'
         parameters:
     """
+
     arn = func_arn(function)
     lambda_details = arn_to_lambda.get(arn)
     if not lambda_details:
@@ -589,7 +590,7 @@ def get_function_configuration(function):
         'Handler': lambda_details.handler,
         'Runtime': lambda_details.runtime,
         'Timeout': LAMBDA_DEFAULT_TIMEOUT,
-        'Environment': lambda_details.envvars,
+        'Environment': {'Variables': lambda_details.envvars},
         'VpcConfig': lambda_details.vpc_config
     }
     return jsonify(result)

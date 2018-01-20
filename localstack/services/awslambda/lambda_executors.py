@@ -107,6 +107,8 @@ class LambdaExecutorContainers(LambdaExecutor):
         environment['AWS_LAMBDA_EVENT_BODY'] = event_body_escaped
         environment['HOSTNAME'] = docker_host
         environment['LOCALSTACK_HOSTNAME'] = docker_host
+        environment['LAMBDA_FUNCTION_ARN'] = func_arn
+        environment['LAMBDA_FUNCTION_NAME'] = func_arn.split(':function:')[-1]
 
         # custom command to execute in the container
         command = ''
@@ -240,6 +242,8 @@ class LambdaExecutorReuseContainers(LambdaExecutorContainers):
                 
                 network = self.lambda_docker_cmd_networksection(func_arn)
 
+                cust_options = config.LAMBDA_DOCKER_OPTIONS
+                 
                 # Create and start the container
                 LOG.debug('Creating container: %s' % container_name)
                 cmd = (
@@ -252,8 +256,9 @@ class LambdaExecutorReuseContainers(LambdaExecutorContainers):
                     ' -e LOCALSTACK_HOSTNAME="$LOCALSTACK_HOSTNAME"'
                     '  %s'  # env_vars
                     '  %s'  # network config
+                    '  %s'  # custom options
                     ' lambci/lambda:%s'
-                ) % (container_name, env_vars_str, network, runtime)
+                ) % (container_name, env_vars_str, network, cust_options, runtime)
                 LOG.debug(cmd)
                 run(cmd, stderr=subprocess.PIPE, outfile=subprocess.PIPE)
 
@@ -435,6 +440,7 @@ class LambdaExecutorSeparateContainers(LambdaExecutorContainers):
         env_vars_string = ' '.join(['-e {}="${}"'.format(k, k) for (k, v) in env_vars.items()])
 
         network = self.lambda_docker_cmd_networksection(func_arn)
+        cust_options = config.LAMBDA_DOCKER_OPTIONS
         
         if config.LAMBDA_REMOTE_DOCKER:
             cmd = (
@@ -442,11 +448,12 @@ class LambdaExecutorSeparateContainers(LambdaExecutorContainers):
                 ' %s'
                 ' %s'
                 ' %s'
+                ' %s'
                 ' "lambci/lambda:%s" %s'
                 ')";'
                 'docker cp "%s/." "$CONTAINER_ID:/var/task";'
                 'docker start -a "$CONTAINER_ID";'
-            ) % (entrypoint, env_vars_string, runtime, network, command, lambda_cwd)
+            ) % (entrypoint, env_vars_string, network, cust_options, runtime, command, lambda_cwd)
         else:
             lambda_cwd_on_host = self.get_host_path_for_path_in_docker(lambda_cwd)
             cmd = (
@@ -454,9 +461,10 @@ class LambdaExecutorSeparateContainers(LambdaExecutorContainers):
                 '%s -v "%s":/var/task'
                 ' %s'
                 ' %s'
+                ' %s'
                 ' --rm'
                 ' "lambci/lambda:%s" %s'
-            ) % (entrypoint, lambda_cwd_on_host, env_vars_string, network, runtime, command)
+            ) % (entrypoint, lambda_cwd_on_host, env_vars_string, network, cust_options, runtime, command)
         return cmd
 
     def get_host_path_for_path_in_docker(self, path):
