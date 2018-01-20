@@ -423,10 +423,6 @@ class ProxyListenerS3(ProxyListener):
         if method == 'POST':
             key, redirect_url = multipart_content.find_multipart_redirect_url(data, headers)
 
-            # send notification for object POSTS
-            object_path = key if key[0] == '/' else '/%s' % key
-            send_notifications(method, bucket_name, object_path)
-
             if key and redirect_url:
                 response.status_code = 303
                 response.headers['Location'] = expand_redirect_url(redirect_url, key, bucket_name)
@@ -437,7 +433,7 @@ class ProxyListenerS3(ProxyListener):
         bucket_name_in_host = headers['host'].startswith(bucket_name)
 
         should_send_notifications = all([
-            method in ('PUT', 'DELETE'),
+            method in ('PUT', 'POST', 'DELETE'),
             '/' in path[1:] or bucket_name_in_host,
             # check if this is an actual put object request, because it could also be
             # a put bucket request with a path like this: /bucket_name/
