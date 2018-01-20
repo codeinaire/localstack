@@ -80,7 +80,7 @@ class ContainerInfo:
 class LambdaExecutorContainers(LambdaExecutor):
     """ Abstract executor class for executing Lambda functions in Docker containers """
 
-    def prepare_execution(self, func_arn, env_vars, runtime, command, handler, lambda_cwd):
+    def prepare_execution(self, func_arn, func_details, env_vars, runtime, command, handler, lambda_cwd):
         raise Exception('Not implemented')
 
     def execute(self, func_arn, func_details, event, context=None, version=None, async=False):
@@ -124,7 +124,7 @@ class LambdaExecutorContainers(LambdaExecutor):
                 (taskdir, LAMBDA_EXECUTOR_CLASS, handler, LAMBDA_EVENT_FILE))
 
         # determine the command to be executed (implemented by subclasses)
-        cmd = self.prepare_execution(func_arn, environment, runtime, command, handler, lambda_cwd)
+        cmd = self.prepare_execution(func_arn, func_details, environment, runtime, command, handler, lambda_cwd)
 
         # lambci writes the Lambda result to stdout and logs to stderr, fetch it from there!
         LOG.debug('Running lambda cmd: %s' % cmd)
@@ -163,7 +163,7 @@ class LambdaExecutorReuseContainers(LambdaExecutorContainers):
         # locking thread for creation/destruction of docker containers.
         self.docker_container_lock = threading.RLock()
 
-    def prepare_execution(self, func_arn, env_vars, runtime, command, handler, lambda_cwd):
+    def prepare_execution(self, func_arn, func_details, env_vars, runtime, command, handler, lambda_cwd):
 
         # check whether the Lambda has been invoked before
         has_been_invoked_before = func_arn in self.function_invoke_times
@@ -173,7 +173,7 @@ class LambdaExecutorReuseContainers(LambdaExecutorContainers):
 
         # create/verify the docker container is running.
         LOG.debug('Priming docker container with runtime "%s" and arn "%s".', runtime, func_arn)
-        container_info = self.prime_docker_container(runtime, func_arn, env_vars.items(), lambda_cwd)
+        container_info = self.prime_docker_container(runtime, func_arn, func_details, env_vars.items(), lambda_cwd)
 
         # Note: currently "docker exec" does not support --env-file, i.e., environment variables can only be
         # passed directly on the command line, using "-e" below. TODO: Update this code once --env-file is
@@ -215,7 +215,7 @@ class LambdaExecutorReuseContainers(LambdaExecutorContainers):
         self.function_invoke_times = {}
         return self.destroy_existing_docker_containers()
 
-    def prime_docker_container(self, runtime, func_arn, env_vars, lambda_cwd):
+    def prime_docker_container(self, runtime, func_arn, func_details, env_vars, lambda_cwd):
         """
         Prepares a persistent docker container for a specific function.
         :param runtime: Lamda runtime environment. python2.7, nodejs6.10, etc.
@@ -238,7 +238,7 @@ class LambdaExecutorReuseContainers(LambdaExecutorContainers):
 
                 env_vars_str = ' '.join(['-e {}={}'.format(k, cmd_quote(v)) for (k, v) in env_vars])
 
-                network = self.lambda_docker_cmd_networksection(func_arn)
+                network = self.lambda_docker_cmd_networksection(func_arn, func_details)
 
                 cust_options = config.LAMBDA_DOCKER_OPTIONS
 
@@ -428,7 +428,7 @@ class LambdaExecutorReuseContainers(LambdaExecutorContainers):
 
 class LambdaExecutorSeparateContainers(LambdaExecutorContainers):
 
-    def prepare_execution(self, func_arn, env_vars, runtime, command, handler, lambda_cwd):
+    def prepare_execution(self, func_arn, func_details, env_vars, runtime, command, handler, lambda_cwd):
         entrypoint = ''
         if command:
             entrypoint = ' --entrypoint ""'
@@ -437,7 +437,7 @@ class LambdaExecutorSeparateContainers(LambdaExecutorContainers):
 
         env_vars_string = ' '.join(['-e {}="${}"'.format(k, k) for (k, v) in env_vars.items()])
 
-        network = self.lambda_docker_cmd_networksection(func_arn)
+        network = self.lambda_docker_cmd_networksection(func_arn, func_details)
         cust_options = config.LAMBDA_DOCKER_OPTIONS
 
         if config.LAMBDA_REMOTE_DOCKER:
