@@ -321,6 +321,7 @@ def run_lambda(func, event, context, func_arn, suppress_output=False, async=Fals
                     '%s -e AWS_LAMBDA_EVENT_BODY="$AWS_LAMBDA_EVENT_BODY"'
                     ' -e HOSTNAME="$HOSTNAME"'
                     ' -e LOCALSTACK_HOSTNAME="$LOCALSTACK_HOSTNAME"' +
+                    ' --rm' +
                     lambda_docker_cmd_networksection(func_arn) +
                     config.LAMBDA_DOCKER_OPTIONS +
                     ' %s'
@@ -350,7 +351,9 @@ def run_lambda(func, event, context, func_arn, suppress_output=False, async=Fals
             env_vars = {
                 'AWS_LAMBDA_EVENT_BODY': event_body_escaped,
                 'HOSTNAME': docker_host,
-                'LOCALSTACK_HOSTNAME': docker_host
+                'LOCALSTACK_HOSTNAME': docker_host,
+                'LAMBDA_FUNCTION_ARN': func_arn,
+                'LAMBDA_FUNCTION_NAME': func_arn.split(':function:')[-1]
             }
             # lambci writes the Lambda result to stdout and logs to stderr, fetch it from there!
             result, log_output = run_lambda_executor(cmd, env_vars, async)
@@ -723,6 +726,7 @@ def get_function_configuration(function):
         operationId: 'getFunctionConfiguration'
         parameters:
     """
+
     arn = func_arn(function)
     lambda_details = arn_to_lambda.get(arn)
     if not lambda_details:
@@ -734,7 +738,7 @@ def get_function_configuration(function):
         'Handler': lambda_details.handler,
         'Runtime': lambda_details.runtime,
         'Timeout': LAMBDA_DEFAULT_TIMEOUT,
-        'Environment': lambda_details.envvars,
+        'Environment': {'Variables': lambda_details.envvars},
         'VpcConfig': lambda_details.vpc_config
     }
     return jsonify(result)
