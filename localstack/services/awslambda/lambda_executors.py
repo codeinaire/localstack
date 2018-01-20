@@ -132,25 +132,23 @@ class LambdaExecutorContainers(LambdaExecutor):
         LOG.debug('Lambda result / log output:\n%s\n>%s' % (result.strip(), log_output.strip().replace('\n', '\n> ')))
         return result, log_output
 
-    def lambda_docker_network(self, func_arn):
+    def lambda_docker_network(self, func_arn, func_details):
         network = None
-    
-        lambda_config = arn_to_lambda[func_arn]
-        if config.LAMBDA_SUBNET_AS_DOCKERNET and lambda_config.vpc_config:
-            subnets = lambda_config.vpc_config.get('SubnetIds', [])
+
+        if config.LAMBDA_SUBNET_AS_DOCKERNET and func_details.vpc_config:
+            subnets = func_details.vpc_config.get('SubnetIds', [])
             if len(subnets) > 0:
                 network = subnets[0]
-    
+
         if not network and config.LAMBDA_DEFAULT_DOCKER_NETWORK:
             network = config.LAMBDA_DEFAULT_DOCKER_NETWORK
-    
+
         return network
-    
-    
-    def lambda_docker_cmd_networksection(self, func_arn):
-        network = lambda_docker_network(func_arn)
+
+    def lambda_docker_cmd_networksection(self, func_arn, func_details):
+        network = self.lambda_docker_network(func_arn, func_details)
         if network:
-            return f' --network="{network}" '
+            return ' --network="%s" ' % network
         else:
             return ''
 
@@ -239,11 +237,11 @@ class LambdaExecutorReuseContainers(LambdaExecutorContainers):
                 self.destroy_docker_container(func_arn)
 
                 env_vars_str = ' '.join(['-e {}={}'.format(k, cmd_quote(v)) for (k, v) in env_vars])
-                
+
                 network = self.lambda_docker_cmd_networksection(func_arn)
 
                 cust_options = config.LAMBDA_DOCKER_OPTIONS
-                 
+
                 # Create and start the container
                 LOG.debug('Creating container: %s' % container_name)
                 cmd = (
@@ -441,7 +439,7 @@ class LambdaExecutorSeparateContainers(LambdaExecutorContainers):
 
         network = self.lambda_docker_cmd_networksection(func_arn)
         cust_options = config.LAMBDA_DOCKER_OPTIONS
-        
+
         if config.LAMBDA_REMOTE_DOCKER:
             cmd = (
                 'CONTAINER_ID="$(docker create'
