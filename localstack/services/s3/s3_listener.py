@@ -154,7 +154,8 @@ def send_notifications(method, bucket_name, object_path):
                     connection_config = botocore.config.Config(read_timeout=300)
                     lambda_client = aws_stack.connect_to_service('lambda', config=connection_config)
                     try:
-                        lambda_client.invoke(FunctionName=config['CloudFunction'], Payload=message)
+                        lambda_client.invoke(FunctionName=config['CloudFunction'],
+                                             InvocationType='Event', Payload=message)
                     except Exception as e:
                         LOGGER.warning('Unable to send notification for S3 bucket "%s" to Lambda function "%s".' %
                             (bucket_name, config['CloudFunction']))
