@@ -408,6 +408,7 @@ def do_list_functions():
             'Handler': arn_to_lambda.get(arn).handler,
             'Runtime': arn_to_lambda.get(arn).runtime,
             'Timeout': LAMBDA_DEFAULT_TIMEOUT,
+            'VpcConfig': arn_to_lambda.get(arn).vpc_config
             # 'Description': ''
             # 'MemorySize': 192,
         })
@@ -438,6 +439,9 @@ def create_function():
         arn_to_lambda[arn].handler = data['Handler']
         arn_to_lambda[arn].runtime = data['Runtime']
         arn_to_lambda[arn].envvars = data.get('Environment', {}).get('Variables', {})
+        arn_to_lambda[arn].vpc_config = data.get('VpcConfig',
+            {'SubnetIds': [], 'SecurityGroupIds': []})
+
         result = set_function_code(data['Code'], lambda_name)
         if isinstance(result, Response):
             del arn_to_lambda[arn]
@@ -574,6 +578,7 @@ def get_function_configuration(function):
         operationId: 'getFunctionConfiguration'
         parameters:
     """
+
     arn = func_arn(function)
     lambda_details = arn_to_lambda.get(arn)
     if not lambda_details:
@@ -585,7 +590,8 @@ def get_function_configuration(function):
         'Handler': lambda_details.handler,
         'Runtime': lambda_details.runtime,
         'Timeout': LAMBDA_DEFAULT_TIMEOUT,
-        'Environment': lambda_details.envvars
+        'Environment': {'Variables': lambda_details.envvars},
+        'VpcConfig': lambda_details.vpc_config
     }
     return jsonify(result)
 
@@ -611,6 +617,9 @@ def update_function_configuration(function):
         arn_to_lambda[arn].runtime = data['Runtime']
     if data.get('Environment'):
         arn_to_lambda[arn].envvars = data.get('Environment', {}).get('Variables', {})
+    if data.get('VpcConfig'):
+        arn_to_lambda[arn].vpc_config = data['VpcConfig']
+
     result = {}
     return jsonify(result)
 

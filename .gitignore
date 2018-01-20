@@ -23,3 +23,7 @@ localstack/infra/
 ~*
 *~
 /.idea
+.vscode
+.idea
+tmp
+/.pydevproject
