@@ -420,6 +420,7 @@ class ProxyListenerS3(ProxyListener):
 
         # POST requests to S3 may include a success_action_redirect field,
         # which should be used to redirect a client to a new location.
+        key = None
         if method == 'POST':
             key, redirect_url = multipart_content.find_multipart_redirect_url(data, headers)
 
@@ -444,11 +445,15 @@ class ProxyListenerS3(ProxyListener):
 
         # get subscribers and send bucket notifications
         if should_send_notifications:
-            if bucket_name_in_host:
+            # if we already have a good key, use it, otherwise examine the path
+            if key:
+                object_path = '/' + key
+            elif bucket_name_in_host:
                 object_path = parsed.path
             else:
                 parts = parsed.path[1:].split('/', 1)
                 object_path = parts[1] if parts[1][0] == '/' else '/%s' % parts[1]
+                
             send_notifications(method, bucket_name, object_path)
 
         # publish event for creation/deletion of buckets:
