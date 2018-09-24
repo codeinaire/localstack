@@ -109,7 +109,7 @@ class ShellCommandThread (FuncThread):
             return line.strip() + '\r\n'
 
         try:
-            self.process = run(self.cmd, async=True, stdin=self.stdin, outfile=self.outfile,
+            self.process = run(self.cmd, asynchronous=True, stdin=self.stdin, outfile=self.outfile,
                 env_vars=self.env_vars, inherit_cwd=self.inherit_cwd)
             if self.outfile:
                 if self.outfile == subprocess.PIPE:
@@ -324,6 +324,17 @@ def mkdir(folder):
         os.makedirs(folder)
 
 
+def ensure_readable(file_path, default_perms=None):
+    if default_perms is None:
+        default_perms = 0o644
+    try:
+        with open(file_path, 'rb'):
+            pass
+    except Exception:
+        LOGGER.info('Updating permissions as file is currently not readable: %s' % file_path)
+        os.chmod(file_path, default_perms)
+
+
 def chmod_r(path, mode):
     """Recursive chmod"""
     os.chmod(path, mode)
@@ -486,17 +497,41 @@ def unzip(path, target_dir):
     except Exception as e:
         LOGGER.warning('Unable to open zip file: %s: %s' % (path, e))
         raise e
-    zip_ref.extractall(target_dir)
+    # Make sure to preserve file permissions in the zip file
+    # https://www.burgundywall.com/post/preserving-file-perms-with-python-zipfile-module
+    for file_entry in zip_ref.infolist():
+        _unzip_file_entry(zip_ref, file_entry, target_dir)
     zip_ref.close()
 
 
+def _unzip_file_entry(zip_ref, file_entry, target_dir):
+    """
+    Extracts a Zipfile entry and preserves permissions
+    """
+    zip_ref.extract(file_entry.filename, path=target_dir)
+    out_path = os.path.join(target_dir, file_entry.filename)
+    perm = file_entry.external_attr >> 16
+    os.chmod(out_path, perm or 0o777)
+
+
 def is_jar_archive(content):
-    # TODO Simple stupid heuristic to determine whether a file is a JAR archive
+    has_class_content = False
     try:
-        return 'class' in content and 'META-INF' in content
+        has_class_content = 'class' in content
     except TypeError:
         # in Python 3 we need to use byte strings for byte-based file content
-        return b'class' in content and b'META-INF' in content
+        has_class_content = b'class' in content
+    if not has_class_content:
+        return False
+    try:
+        with tempfile.NamedTemporaryFile() as tf:
+            tf.write(content)
+            tf.flush()
+            with zipfile.ZipFile(tf.name, 'r') as zf:
+                zf.infolist()
+    except Exception:
+        return False
+    return True
 
 
 def is_root():
@@ -576,7 +611,7 @@ def run_cmd_safe(**kwargs):
     return run_safe(run, print_error=False, **kwargs)
 
 
-def run(cmd, cache_duration_secs=0, print_error=True, async=False, stdin=False,
+def run(cmd, cache_duration_secs=0, print_error=True, asynchronous=False, stdin=False,
         stderr=subprocess.STDOUT, outfile=None, env_vars=None, inherit_cwd=False):
     # don't use subprocess module as it is not thread-safe
     # http://stackoverflow.com/questions/21194380/is-subprocess-popen-not-thread-safe
@@ -593,7 +628,7 @@ def run(cmd, cache_duration_secs=0, print_error=True, async=False, stdin=False,
     def do_run(cmd):
         try:
             cwd = os.getcwd() if inherit_cwd else None
-            if not async:
+            if not asynchronous:
                 if stdin:
                     return subprocess.check_output(cmd, shell=True,
                         stderr=stderr, stdin=subprocess.PIPE, env=env_dict, cwd=cwd)

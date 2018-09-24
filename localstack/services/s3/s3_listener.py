@@ -2,6 +2,8 @@ import re
 import logging
 import json
 import uuid
+import base64
+import codecs
 import xmltodict
 import collections
 import six
@@ -32,6 +34,9 @@ LOGGER = logging.getLogger(__name__)
 
 # XML namespace constants
 XMLNS_S3 = 'http://s3.amazonaws.com/doc/2006-03-01/'
+
+# list of destination types for bucket notifications
+NOTIFICATION_DESTINATION_TYPES = ('Queue', 'Topic', 'CloudFunction', 'LambdaFunction')
 
 
 def event_type_matches(events, action, api_method):
@@ -149,18 +154,21 @@ def send_notifications(method, bucket_name, object_path):
                     except Exception as e:
                         LOGGER.warning('Unable to send notification for S3 bucket "%s" to SNS topic "%s".' %
                             (bucket_name, config['Topic']))
-                if config.get('CloudFunction'):
+                # CloudFunction and LambdaFunction are semantically identical
+                lambda_function_config = config.get('CloudFunction') or config.get('LambdaFunction')
+                if lambda_function_config:
                     # make sure we don't run into a socket timeout
                     connection_config = botocore.config.Config(read_timeout=300)
                     lambda_client = aws_stack.connect_to_service('lambda', config=connection_config)
                     try:
-                        lambda_client.invoke(FunctionName=config['CloudFunction'],
+                        lambda_client.invoke(FunctionName=lambda_function_config,
                                              InvocationType='Event', Payload=message)
                     except Exception as e:
                         LOGGER.warning('Unable to send notification for S3 bucket "%s" to Lambda function "%s".' %
-                            (bucket_name, config['CloudFunction']))
-                if not filter(lambda x: config.get(x), ('Queue', 'Topic', 'CloudFunction')):
-                    LOGGER.warning('Neither of Queue/Topic/CloudFunction defined for S3 notification.')
+                            (bucket_name, lambda_function_config))
+                if not filter(lambda x: config.get(x), NOTIFICATION_DESTINATION_TYPES):
+                    LOGGER.warning('Neither of %s defined for S3 notification.' %
+                        '/'.join(NOTIFICATION_DESTINATION_TYPES))
 
 
 def get_cors(bucket_name):
@@ -273,6 +281,26 @@ def strip_chunk_signatures(data):
     return data_new
 
 
+def check_content_md5(data, headers):
+    actual = md5(strip_chunk_signatures(data))
+    expected = headers['Content-MD5']
+    try:
+        expected = to_str(codecs.encode(base64.b64decode(expected), 'hex'))
+    except Exception:
+        expected = '__invalid__'
+    if actual != expected:
+        response = Response()
+        result = {
+            'Error': {
+                'Code': 'InvalidDigest',
+                'Message': 'The Content-MD5 you specified was invalid'
+            }
+        }
+        response._content = xmltodict.unparse(result)
+        response.status_code = 400
+        return response
+
+
 def expand_redirect_url(starting_url, key, bucket):
     """ Add key and bucket parameters to starting URL query string. """
     parsed = urlparse.urlparse(starting_url)
@@ -319,7 +347,6 @@ def get_bucket_name(path, headers):
         match = pattern.match(host)
         if match:
             bucket_name = match.groups()[0]
-
             break
 
     # we're either returning the original bucket_name,
@@ -327,9 +354,70 @@ def get_bucket_name(path, headers):
     return bucket_name
 
 
+def handle_notification_request(bucket, method, data):
+    response = Response()
+    response.status_code = 200
+    response._content = ''
+    if method == 'GET':
+        # TODO check if bucket exists
+        result = '<NotificationConfiguration xmlns="%s">' % XMLNS_S3
+        if bucket in S3_NOTIFICATIONS:
+            notif = S3_NOTIFICATIONS[bucket]
+            for dest in NOTIFICATION_DESTINATION_TYPES:
+                if dest in notif:
+                    dest_dict = {
+                        '%sConfiguration' % dest: {
+                            'Id': uuid.uuid4(),
+                            dest: notif[dest],
+                            'Event': notif['Event'],
+                            'Filter': notif['Filter']
+                        }
+                    }
+                    result += xmltodict.unparse(dest_dict, full_document=False)
+        result += '</NotificationConfiguration>'
+        response._content = result
+
+    if method == 'PUT':
+        parsed = xmltodict.parse(data)
+        notif_config = parsed.get('NotificationConfiguration')
+        S3_NOTIFICATIONS.pop(bucket, None)
+        for dest in NOTIFICATION_DESTINATION_TYPES:
+            config = notif_config.get('%sConfiguration' % (dest))
+            if config:
+                events = config.get('Event')
+                if isinstance(events, six.string_types):
+                    events = [events]
+                event_filter = config.get('Filter', {})
+                # make sure FilterRule is an array
+                s3_filter = _get_s3_filter(event_filter)
+                if s3_filter and not isinstance(s3_filter.get('FilterRule', []), list):
+                    s3_filter['FilterRule'] = [s3_filter['FilterRule']]
+                # create final details dict
+                notification_details = {
+                    'Id': config.get('Id'),
+                    'Event': events,
+                    dest: config.get(dest),
+                    'Filter': event_filter
+                }
+                # TODO: what if we have multiple destinations - would we overwrite the config?
+                S3_NOTIFICATIONS[bucket] = clone(notification_details)
+    return response
+
+
 class ProxyListenerS3(ProxyListener):
 
     def forward_request(self, method, path, data, headers):
+
+        # Make sure we use 'localhost' as forward host, to ensure moto uses path style addressing.
+        # Note that all S3 clients using LocalStack need to enable path style addressing.
+        if 's3.amazonaws.com' not in headers.get('host', ''):
+            headers['host'] = 'localhost'
+
+        # check content md5 hash integrity
+        if 'Content-MD5' in headers:
+            response = check_content_md5(data, headers)
+            if response is not None:
+                return response
 
         modified_data = None
 
@@ -360,55 +448,10 @@ class ProxyListenerS3(ProxyListener):
         query = parsed.query
         path = parsed.path
         bucket = path.split('/')[1]
-        query_map = urlparse.parse_qs(query)
+        query_map = urlparse.parse_qs(query, keep_blank_values=True)
         if query == 'notification' or 'notification' in query_map:
-            response = Response()
-            response.status_code = 200
-            if method == 'GET':
-                # TODO check if bucket exists
-                result = '<NotificationConfiguration xmlns="%s">' % XMLNS_S3
-                if bucket in S3_NOTIFICATIONS:
-                    notif = S3_NOTIFICATIONS[bucket]
-                    for dest in ['Queue', 'Topic', 'CloudFunction']:
-                        if dest in notif:
-                            dest_dict = {
-                                '%sConfiguration' % dest: {
-                                    'Id': uuid.uuid4(),
-                                    dest: notif[dest],
-                                    'Event': notif['Event'],
-                                    'Filter': notif['Filter']
-                                }
-                            }
-                            result += xmltodict.unparse(dest_dict, full_document=False)
-                result += '</NotificationConfiguration>'
-                response._content = result
-
-            if method == 'PUT':
-                parsed = xmltodict.parse(data)
-                notif_config = parsed.get('NotificationConfiguration')
-                S3_NOTIFICATIONS.pop(bucket, None)
-                for dest in ['Queue', 'Topic', 'CloudFunction']:
-                    config = notif_config.get('%sConfiguration' % (dest))
-                    if config:
-                        events = config.get('Event')
-                        if isinstance(events, six.string_types):
-                            events = [events]
-                        event_filter = config.get('Filter', {})
-                        # make sure FilterRule is an array
-                        s3_filter = _get_s3_filter(event_filter)
-                        if s3_filter and not isinstance(s3_filter.get('FilterRule', []), list):
-                            s3_filter['FilterRule'] = [s3_filter['FilterRule']]
-                        # create final details dict
-                        notification_details = {
-                            'Id': config.get('Id'),
-                            'Event': events,
-                            dest: config.get(dest),
-                            'Filter': event_filter
-                        }
-                        # TODO: what if we have multiple destinations - would we overwrite the config?
-                        S3_NOTIFICATIONS[bucket] = clone(notification_details)
-
-            # return response for ?notification request
+            # handle and return response for ?notification request
+            response = handle_notification_request(bucket, method, data)
             return response
 
         if query == 'cors' or 'cors' in query_map:
@@ -433,7 +476,7 @@ class ProxyListenerS3(ProxyListener):
 
         bucket_name = get_bucket_name(path, headers)
 
-        # No path-name based bucket name?  Try host-based
+        # No path-name based bucket name? Try host-based
         hostname_parts = headers['host'].split('.')
         if (not bucket_name or len(bucket_name) == 0) and len(hostname_parts) > 1:
             bucket_name = hostname_parts[0]
@@ -459,8 +502,9 @@ class ProxyListenerS3(ProxyListener):
             # check if this is an actual put object request, because it could also be
             # a put bucket request with a path like this: /bucket_name/
             bucket_name_in_host or (len(path[1:].split('/')) > 1 and len(path[1:].split('/')[1]) > 0),
-            # ignore bucket notification configuration requests
-            parsed.query != 'notification' and parsed.query != 'lifecycle',
+            # don't send notification if url has a query part (some/path/with?query)
+            # (query can be one of 'notification', 'lifecycle', 'tagging', etc)
+            not parsed.query
         ])
 
         # get subscribers and send bucket notifications
@@ -507,12 +551,15 @@ class ProxyListenerS3(ProxyListener):
                 response._content = re.sub(r'([^\?])>\n\s*<', r'\1><', response_content_str, flags=re.MULTILINE)
                 if is_bytes:
                     response._content = to_bytes(response._content)
-                # fix content-type: https://github.com/localstack/localstack/issues/549
+                # fix content-type: https://github.com/localstack/localstack/issues/618
+                #                   https://github.com/localstack/localstack/issues/549
                 if 'text/html' in response.headers.get('Content-Type', ''):
-                    response.headers['Content-Type'] = 'text/xml; charset=utf-8'
+                    response.headers['Content-Type'] = 'application/xml; charset=utf-8'
+
+                response.headers['content-length'] = len(response._content)
 
             # update content-length headers (fix https://github.com/localstack/localstack/issues/541)
-            if isinstance(response._content, (six.string_types, six.binary_type)):
+            if method == 'DELETE':
                 response.headers['content-length'] = len(response._content)
 
 

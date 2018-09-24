@@ -26,8 +26,12 @@ def handler(event, context):
 
     if 'httpMethod' in event:
         # looks like this is a call from an AWS_PROXY API Gateway
-        body = json.loads(event['body'])
+        try:
+            body = json.loads(event['body'])
+        except Exception:
+            body = {}
         body['pathParameters'] = event.get('pathParameters')
+        body['httpMethod'] = event.get('httpMethod')
         return {
             'body': body,
             'statusCode': body.get('return_status_code', 200),
@@ -35,7 +39,14 @@ def handler(event, context):
         }
 
     if 'Records' not in event:
-        return event
+        return {
+            'event': event,
+            'context': {
+                'invoked_function_arn': context.invoked_function_arn,
+                'function_version': context.function_version,
+                'function_name': context.function_name
+            }
+        }
 
     raw_event_messages = []
     for record in event['Records']:
@@ -83,6 +94,10 @@ def deserialize_event(event):
         assert kinesis['sequenceNumber']
         kinesis['data'] = json.loads(to_str(base64.b64decode(kinesis['data'])))
         return kinesis
+    sqs = event.get('sqs')
+    if sqs:
+        result = {'data': event['body']}
+        return result
     return event.get('Sns')
 
 

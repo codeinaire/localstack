@@ -279,7 +279,8 @@ def s3_bucket_arn(bucket_name, account_id=None):
 
 def sqs_queue_arn(queue_name, account_id=None):
     account_id = get_account_id(account_id)
-    return ('arn:aws:sqs:%s:%s:%s' % (get_local_region(), account_id, queue_name))
+    # ElasticMQ sets a static region of "elasticmq"
+    return ('arn:aws:sqs:elasticmq:%s:%s' % (account_id, queue_name))
 
 
 def sns_topic_arn(topic_name, account_id=None):
@@ -449,6 +450,10 @@ def create_api_gateway_integrations(api_id, resource_id, method, integrations=[]
                 httpMethod=method['httpMethod'],
                 statusCode=response_config['code']
             )
+
+
+def apigateway_invocations_arn(lambda_uri):
+    return 'arn:aws:apigateway:%s:lambda:path/2015-03-31/functions/%s/invocations' % (DEFAULT_REGION, lambda_uri)
 
 
 def get_elasticsearch_endpoint(domain=None, region_name=None):
